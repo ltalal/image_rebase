@@ -76,11 +76,6 @@ Prerequisites
 * [Docker Registry V2](https://docs.docker.com/registry/)   
 
 
-Running examples
+Examples
 ----------------
 See `samples` directory for examples.
-
-* Docker is required to run scripts
-* `cd samples`
-* Run once `./registry_setup.sh`
-* Run `./example_XXX.sh` scripts

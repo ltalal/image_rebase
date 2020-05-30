@@ -16,13 +16,13 @@ It supports different modes of operation.
 
 ### Automatic base image detection (recommended)
 
-This mode is the simplest to use but requires you to change your Dockerfiles by adding FROM LABEL. It must be the first command (after FROM directive):
+This mode is the simplest one to use but requires you changing your Dockerfiles by adding FROM LABEL. It must be the first directive (after FROM):
     
     FROM myrepo/base_image:base_tag
     LABEL FROM=base_image:base_tag
     # rest of Dockerfile
 
-This should be done for images being rebased. Changing base images is not required. 
+This should be made only for images being rebased. Changing base images is not required.
 Then to rebase your image execute: 
 
 `image_rebase $registry_url myimage:mytag`. 
@@ -59,7 +59,7 @@ You can retrieve history using `docker inspect <image>` and count numbers of com
 ### Limitations
 
 * Docker Registry authentication is not supported
-* Support for Dockerfile commands for rebasing images is limited. However these limitations do not apply to base images - only to images that are derived from them. 
+* Support for Dockerfile commands is limited for images being rebased. However these limitations do not apply to base images - only to images that are derived from them.
 List of currently supported commands:
     * CMD
     * ENTRYPOINT

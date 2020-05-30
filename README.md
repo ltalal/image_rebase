@@ -12,7 +12,7 @@ Key Benefits
 * Docker Registry will not bloat due to added layers.
 * Communicates directly to Docker Registry - Docker Engine isn't required. 
  
-It supports two mode of operation.
+It supports different modes of operation.
 
 ### Automatic base image detection (recommended)
 

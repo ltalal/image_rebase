@@ -9,39 +9,49 @@ import json
 import sys
 import datetime
 import hashlib
+import logging
 from collections import OrderedDict
 
-DEBUGLEVEL = 0
 DEFAULT_TIMEOUT = 5
+debuglevel = 0
 
 
 def run():
+    global debuglevel
     parser = argparse.ArgumentParser(
         description='docker_rebase allows you to change base image of your Docker image by '
                     'replacing layers', add_help=False)
     parser.add_argument('registry_url', help='url of docker registry')
     parser.add_argument('image', help='name:tag of source image')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('-f', '--force', dest='force', action='store_true',
                         help='Force overwriting existing target image')
-    parser.add_argument('-B', '--from-base', dest='from_base',
-                        help='Current base image name:tag. Used to autodetect num_layers')
     parser.add_argument('-b', '--to-base', dest='base_image', help='Target base image name:tag. By default it is '
-                                                                'autodetected from source image.')
-    parser.add_argument('-t', '--tag', dest='new_tag', help='Target tag for new image. By default is the same as of '
-                                                            'the source.')
-    parser.add_argument('-l', '--layers', type=int, dest='num_layers',
-                        help='Number of layers of image to keep. By default it is '
-                             'autodetected from image manifest or from_base.')
+                                                                   'autodetected from source image.')
+    parser.add_argument('-t', '--tag', dest='new_tag', help='Target tag for new image. '
+                                                            'By default is the same as of the source.')
+
+    exclude_group = parser.add_mutually_exclusive_group()
+    exclude_group.add_argument('-l', '--layers', type=int, dest='num_layers',
+                               help='Number of layers of image to keep. By default it is '
+                                    'autodetected from image manifest or from_base.')
+    exclude_group.add_argument('-B', '--from-base', dest='from_base',
+                               help='Current base image name:tag. Used to autodetect num_layers')
+
     args = parser.parse_args()
 
-    if args.from_base and args.num_layers:
-        raise RuntimeError('Specifying either from_base or num_layers')
-
     registry = DockerRegistry(args.registry_url)
+    if args.verbose:
+        debuglevel = 1
+        log_level = 'DEBUG'
+    else:
+        log_level = 'INFO'
+    logging.basicConfig(format="%(levelname)s: %(message)s", level=log_level)
+
     try:
         registry.image_rebase(args.image, args.new_tag, args.base_image, args.from_base, args.num_layers, args.force)
     except RuntimeError as err:
-        sys.stderr.write('ERROR: ' + err.args[0])
+        logging.error('ERROR: ' + err.args[0])
 
 
 class NoHttpErrorHandler(urllib.request.HTTPDefaultErrorHandler):
@@ -77,12 +87,11 @@ class Connection(object):
         self.baseurl = baseurl
         self.urlopener = urllib.request.build_opener(NoHttpErrorHandler(),
                                                      AllRedirectHandler(),
-                                                     urllib.request.HTTPSHandler(DEBUGLEVEL))
+                                                     urllib.request.HTTPSHandler(debuglevel))
         self.timeout = timeout
 
     def make_request(self, url, data=None, method=None, headers=None, expect=None):
-        if DEBUGLEVEL > 1:
-            print("Try to request https://{0}{1}".format(self.baseurl, url))
+        logging.debug(f"Try to request https://{self.baseurl}{url}")
 
         if headers is None:
             headers = {}
@@ -103,7 +112,8 @@ class Connection(object):
         content = resp.read()
         resp.close()
 
-        if (not expect is None) and not resp.getcode() in expect:
+        if expect is not None \
+                and resp.getcode() not in expect:
             raise RuntimeError(
                 'Unexpected response code %s to %s %s' % (resp.getcode(), request.get_method(), target_url))
 
@@ -134,8 +144,7 @@ class DockerRegistry(object):
 
     def manifest_upload(self, name, tag, manifest):
         manifest_url = '/v2/' + urllib.parse.quote_plus(name) + '/manifests/' + urllib.parse.quote_plus(tag)
-        if DEBUGLEVEL > 0:
-            sys.stderr.write("Uploading: %s\n" % (self.connection.baseurl + manifest_url))
+        logging.debug(f"Uploading: {self.connection.baseurl + manifest_url}")
         self.connection.make_request(
             manifest_url,
             method='PUT', data=manifest, expect=[201],
@@ -167,10 +176,11 @@ class DockerRegistry(object):
         exists, length = self.blob_exists(name, digest)
 
         if exists:  # OK already exists
-            sys.stdout.write("%s: Already exists, %s bytes\n" % (digest, length))
+            logging.info(f"{digest}: Already exists, {length} bytes")
             return digest
 
-        sys.stdout.write("%s: Uploading %d bytes\n" % (digest, len(blob)))
+        logging.info(f"{digest}: Uploading {len(blob)} bytes")
+        sys.stdout.write()
 
         # get upload link
         resp, content = self.connection.make_request(
@@ -194,10 +204,10 @@ class DockerRegistry(object):
         exists, length = self.blob_exists(name, digest)
 
         if exists:  # OK already exists
-            sys.stdout.write("%s: Already exists, %s bytes\n" % (digest, length))
+            logging.info(f"{digest}: Already exists, {length} bytes")
             return digest
 
-        sys.stdout.write("%s: Mounting from %s\n" % (digest, from_name))
+        logging.info(f"{digest}: Mounting from {from_name}")
 
         self.connection.make_request(
             '/v2/' + urllib.parse.quote_plus(name) + '/blobs/uploads/?from=' + urllib.parse.quote_plus(
@@ -220,16 +230,16 @@ class DockerRegistry(object):
         return True, length
 
     def image_get(self, name, tag):
-        sys.stdout.write("Loading manifest %s:%s\n" % (name, tag))
+        logging.info(f"Loading manifest {name}:{tag}")
         image_man = self.manifest_get(name, tag)
-        if DEBUGLEVEL > 0:
-            sys.stderr.write("Manifest %s:%s:\n%s\n" % (name, tag, json.dumps(image_man, indent=4)))
+
+        logging.debug(f"Manifest {name}:{tag}:\n{json.dumps(image_man, indent=4)}")
         image_digest = image_man['config']['digest']
 
-        sys.stdout.write("Loading configuration %s for %s:%s\n" % (image_digest, name, tag))
+        logging.info(f"Loading configuration {image_digest} for {name}:{tag}")
         image_blob = self.blob_get(name, image_digest)
-        if DEBUGLEVEL > 0:
-            sys.stderr.write("Configuration %s:%s:\n%s\n" % (name, tag, json.dumps(image_blob, indent=4)))
+
+        logging.debug(f"Configuration {name}:{tag}:\n{json.dumps(image_blob, indent=4)}")
 
         return image_man, image_blob, image_digest
 
@@ -237,62 +247,58 @@ class DockerRegistry(object):
         name, tag = parse_image_name(image)
         new_tag = new_tag or tag
 
-        if DEBUGLEVEL > 0:
-            sys.stderr.write("Registry: %s\n\n" % self.connection.baseurl)
+        logging.debug(f"Registry: {self.connection.baseurl}")
 
         image_man, image_blob, image_digest = self.image_get(name, tag)
         
         if old_base_image is not None:
-            if DEBUGLEVEL > 0:
-                sys.stderr.write("Autodetecting num_layers from old base image %s\n" % old_base_image)
-                
+            logging.debug(f"Autodetecting num_layers from old base image {old_base_image}")
+
             old_base_name, old_base_tag = parse_image_name(old_base_image)
             old_base_man, old_base_blob, __ = self.image_get(old_base_name, old_base_tag)
             
             if not self.is_base_image(image_man, image_blob, old_base_man, old_base_blob):
-                raise RuntimeError("%s is not a base image for %s" % (image, old_base_image))
+                raise RuntimeError(f"{image} is not a base image for {old_base_image}")
             
             num_layers = len(image_blob['history']) - len(old_base_blob['history'])
-            if DEBUGLEVEL > 0:
-                sys.stderr.write("Container layers: %d\n" % num_layers)
+            logging.debug(f"Container layers: {num_layers}")
 
         if base_image is None:
             if 'FROM' not in image_blob['config']['Labels']:
-                raise RuntimeError("Cannot autodetect base image: label FROM must be set in %s\n" % (image))
+                raise RuntimeError(f"Cannot autodetect base image: label FROM must be set in {image}")
             base_image = image_blob['config']['Labels']['FROM']
-            sys.stdout.write("Autodetected base image name: %s\n" % base_image)
-            
+            logging.info(f"Autodetected base image name: {base_image}")
+
         if num_layers is None:
-            if DEBUGLEVEL > 0:
-                sys.stderr.write("Autodetecting num_layers and base_image by searching for 'LABEL FROM' in %s\n" % image)
-            num_layers = next(index for (index, history) in enumerate(reversed(image_blob['history'])) if history['created_by'].startswith('/bin/sh -c #(nop)  LABEL FROM='))
+            logging.debug(f"Autodetecting num_layers and base_image by searching for 'LABEL FROM' in {image}")
+            num_layers = next(index for (index, history) in enumerate(reversed(image_blob['history']))
+                              if history['created_by'].startswith('/bin/sh -c #(nop)  LABEL FROM='))
             if num_layers is None:
-                raise RuntimeError("Cannot autodetect num_layers: label FROM must be set in %s\n" % (image))
+                raise RuntimeError(f"Cannot autodetect num_layers: label FROM must be set in {image}")
             num_layers += 1
-            if DEBUGLEVEL > 0:
-                sys.stderr.write("Container layers: %d\n" % num_layers)
+            logging.debug(f"Container layers: {num_layers}")
 
         base_name, base_tag = parse_image_name(base_image)
         base_man, base_blob, new_base_digest = self.image_get(base_name, base_tag)
         
         if tag == new_tag:
             if self.is_base_image(image_man, image_blob, base_man, base_blob):
-                sys.stdout.write("%s is already based on %s. Nothing to do.\n" % (image, base_image))
+                logging.info(f"{image} is already based on {base_image}. Nothing to do.")
                 return
             
         elif self.manifest_exists(name, new_tag):
             target_image_man, target_image_blob, __ = self.image_get(name, new_tag)
-            if not self.is_same_or_rebased_image(target_image_man, target_image_blob, image_man, image_blob, num_layers):
+            if not self.is_same_or_rebased_image(target_image_man, target_image_blob,
+                                                 image_man, image_blob, num_layers):
                 if not force:
-                    raise RuntimeError("Target image %s:%s exists and has different top layers. Use --force to overwrite. \n" % (name, new_tag))
-                sys.stdout.write("Overwriting target image %s:%s having different top layers. \n" % (name, new_tag))
+                    raise RuntimeError(f"Target image {name}:{new_tag} exists and has different top layers. "
+                                       f"Use --force to overwrite.")
+                logging.info(f"Overwriting target image {name}:{new_tag} having different top layers.")
             elif self.is_base_image(target_image_man, target_image_blob, base_man, base_blob):
-                sys.stdout.write("%s is already based on %s. Nothing to do.\n" % (image, base_image))
+                logging.info(f"{image} is already based on {base_image}. Nothing to do")
                 return
 
-
-        sys.stdout.write("\nRebasing %s:%s@%s to %s:%s@%s\n\n" % (
-            name, tag, image_digest, base_name, base_tag, new_base_digest))
+        logging.info(f"Rebasing {name}:{tag}@{image_digest} to {base_image}:{base_tag}@{new_base_digest}")
 
         base_blob['history'], top_history = merge_lists(image_blob['history'], num_layers, base_blob['history'],
                                                         'history')
@@ -309,7 +315,7 @@ class DockerRegistry(object):
         base_blob['container_config']['Image'] = new_base_digest
         base_blob['created'] = datetime.datetime.now().isoformat() + 'Z'
 
-        if DEBUGLEVEL > 0:
+        if debuglevel > 0:
             sys.stderr.write("New container configuration:\n %s\n" % json.dumps(base_blob, indent=4))
 
         new_blob = json.dumps(base_blob).encode('utf-8')
@@ -326,14 +332,14 @@ class DockerRegistry(object):
         base_man['config']['size'] = len(new_blob)
         base_man['config']['digest'] = new_digest
 
-        if DEBUGLEVEL > 0:
-            sys.stderr.write("New image manifest:\n %s\n" % json.dumps(base_man, indent=4))
+        logging.debug(f"New image manifest:\n {json.dumps(base_man, indent=4)}")
         new_man = json.dumps(base_man).encode('utf-8')
 
         self.manifest_upload(name, new_tag, new_man)
-        sys.stdout.write("Created %s:%s@%s\n" % (name, new_tag, new_digest))
+        logging.info(f"Created {name}:{new_tag}@{new_digest}")
 
-    def history_apply(self, new_container, old_container, container_history):
+    @staticmethod
+    def history_apply(new_container, old_container, container_history):
         nonempty_layers = 0
         # copy all meta parameters and count non-empty layers
         for history in container_history:
@@ -342,8 +348,7 @@ class DockerRegistry(object):
                 nonempty_layers += 1
             elif history['created_by'].startswith('/bin/sh -c #(nop)'):
                 cmd = history['created_by'][len('/bin/sh -c #(nop)'):].lstrip()
-                if DEBUGLEVEL > 0:
-                    sys.stderr.write("Applying %s" % cmd)
+                logging.debug(f"Applying {cmd}")
 
                 cmd_name, cmd_rest = cmd.split(' ', 1)
                 cmd_arg = cmd_rest.split('=', 1)[0]
@@ -362,7 +367,7 @@ class DockerRegistry(object):
                 elif cmd_name == 'LABEL':
                     val = old_container['config']['Labels'][cmd_arg]
                     if val is None:
-                        raise RuntimeError('No %s Label found' % cmd_arg)
+                        raise RuntimeError(f"No {cmd_arg} Label found")
                     if 'Labels' not in new_container['config']:
                         new_container['config']['Labels'] = OrderedDict()
                     new_container['config']['Labels'][cmd_arg] = val
@@ -371,7 +376,7 @@ class DockerRegistry(object):
                     new_envs = old_container['config']['Env']
                     new_val = [x for x in new_envs if x.startswith(cmd_arg + '=')]
                     if len(new_val) == 0:
-                        raise RuntimeError('No %s ENV found' % cmd_arg)
+                        raise RuntimeError(f"No {cmd_arg} ENV found")
                     old_envs = new_container['config']['Env']
                     old_val = [x for x in old_envs if x.startswith(cmd_arg + '=')]
                     if len(old_val) == 0:
@@ -382,17 +387,17 @@ class DockerRegistry(object):
 
                 elif cmd_name == 'EXPOSE':
                     if len(cmd_rest.split(' ')) > 1:
-                        raise RuntimeError('Multi-arg EXPOSE statements are not supported: %s' % cmd)
+                        raise RuntimeError(f"Multi-arg EXPOSE statements are not supported: {cmd}")
                     port = cmd_arg if '/' in cmd_arg else cmd_arg + '/tcp'
                     val = old_container['config']['ExposedPorts'][port]
                     if val is None:
-                        raise RuntimeError('No %s ExposedPorts found' % cmd_arg)
+                        raise RuntimeError(f"No {cmd_arg} ExposedPorts found")
                     if 'ExposedPorts' not in new_container['config']:
                         new_container['config']['ExposedPorts'] = OrderedDict()
                     new_container['config']['ExposedPorts'][port] = val
                     
                 else:
-                    raise RuntimeError("Command not supported: %s" % cmd)
+                    raise RuntimeError(f"Command not supported: {cmd}")
                 
         return nonempty_layers
 
@@ -400,10 +405,12 @@ class DockerRegistry(object):
         return self.is_base(image_man['layers'], base_man['layers']) \
                and self.is_base(image_blob['history'], base_blob['history']) 
 
-    def is_base(self, image_list, base_list):
+    @staticmethod
+    def is_base(image_list, base_list):
         return image_list[:len(base_list)] == base_list
 
-    def is_same_or_rebased_image(self, man1, blob1, man2, blob2, num_layers):
+    @staticmethod
+    def is_same_or_rebased_image(man1, blob1, man2, blob2, num_layers):
         last_history = blob1['history'][-num_layers:]
         if last_history != blob2['history'][-num_layers:]:
             return False
@@ -419,12 +426,13 @@ def parse_image_name(image):
     return splits[0], (splits[1] if len(splits) > 1 else 'latest')
 
 
-def merge_lists(list, num_elements, new_base, descr):
-    if len(list) < num_elements:
-        raise IOError("Base manifest check failed. %s has invalid length: %d < %d" % (descr, len(list), num_elements))
+def merge_lists(orig_list, num_elements, new_base, descr):
+    if len(orig_list) < num_elements:
+        raise IOError(f"Base manifest check failed. {descr} has invalid length: {len(orig_list)} < {num_elements}")
 
-    top_list = list[len(list) - num_elements:]
+    top_list = orig_list[len(orig_list) - num_elements:]
     return new_base + top_list, top_list
 
 
-run()
+if __name__ == '__main__':
+    run()

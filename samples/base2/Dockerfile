@@ -3,4 +3,5 @@ EXPOSE 2000
 ENV IMAGE_DESCRIPTION="New base image"
 ENV TEST=Successfully\ rebased\ to\ base2!!!
 ENTRYPOINT ["bash","-c"]
-CMD ["echo IMAGE_DESCRIPTION=$IMAGE_DESCRIPTION && echo TEST=$TEST && cat test.txt /etc/centos-release"]
+LABEL VERSION=2
+CMD ["env && echo 'CMD from base:2' && cat test.txt /etc/centos-release"]

@@ -4,19 +4,22 @@ image_rebase
 Description
 -----------
 
-`image_rebase` allows you to change base image of existing Docker images without using `docker build`.
+`image_rebase` allows you to change base image of existing Docker images without using `docker build`. 
+This method not always safe, but could be very useful if there are many images which need to updated in short time. 
+Read about limitations before using it for production.
 
 Key Benefits
 ------------ 
-* Very fast – no layers are downloaded or uploaded. No containers are started or commands being executed. Only JSON manipulation is performed.
+* Very fast – doesn't download or upload any layers. Doesn't fork any process. Uses only JSON manipulation to create the rebased image.
 * Docker Registry will not bloat due to added layers.
-* Communicates directly to Docker Registry - Docker Engine isn't required. 
+* Communicates directly to Docker Registry. Doesn't require Docker Engine. 
  
 It supports different modes of operation.
 
 ### Automatic base image detection (recommended)
 
-This mode is the simplest one to use but requires you changing your Dockerfiles by adding FROM LABEL. It must be the first directive (after FROM):
+This mode is the simplest one to use, but requires adding of LABEL FROM to Dockerfiles of images that you want to be able to rebase later. Label should contain the name and tag of base image. 
+It must be the first directive (after FROM):
     
     FROM myrepo/base_image:base_tag
     LABEL FROM=base_image:base_tag
@@ -34,14 +37,14 @@ This command will:
 
 ### Manually specifying base image
 
-This mode does not require you to change Dockerfile. But you need to specify exact version of previous base image and new base image:
+This mode does not require you to change Dockerfile. Instead, you need to specify exact version of then previous and new base images:
 
 `image_rebase $registry_url myimage:mytag --from-base base_image:base_tag --to-base base_image:new_base_tag`
 
 Note that `base_image:base_tag` must point to the same version of base image that was used during build of myimage. Otherwise the script will fail. 
-Digest of image may be used instead of it's tag: `base_image@sha256:XXXX`
+You may use digest of image instead of tag: `base_image@sha256:XXXX`
 
-It is possible to change non-direct base image. E.g. if there is hierarchy of images A->B->C, it is possible to create new image having another version of A.
+It is possible to change non-direct base image. E.g. if there is a hierarchy of images A->B->C, it is possible to create new image having another version of A.
 
 ### Manually specifying number of layers
 
@@ -56,10 +59,12 @@ You can retrieve history using `docker inspect <image>` and count numbers of com
 
 `--force`: forces overwriting existing target image 
 
+`-l-`, `--label`: name of the label that contains base image (default is `FROM`) 
+
 ### Limitations
 
 * Docker Registry authentication is not supported
-* Support for Dockerfile commands is limited for images being rebased. However these limitations do not apply to base images - only to images that are derived from them.
+* Support for Dockerfile commands is limited for images being rebased. However, these limitations do not apply to base images - only to images that are derived from them.
 List of currently supported commands:
     * CMD
     * ENTRYPOINT
@@ -67,8 +72,11 @@ List of currently supported commands:
     * COPY
     * USER
     * WORKDIR
-    * RUN commands are not re-executed by design. Their result is be reused from old image.
-    * EXPOSE, ENV and LABEL are supported with single argument only. E.g. `ENV A=B C=D` not supported
+    * RUN commands are not re-executed by design. Their result is reused from old image. 
+    Be careful using commands whose result depends on the base image.
+    * EXPOSE
+    * ENV
+    * LABEL
 
 Prerequisites
 -----------
